@@ -1,455 +1,213 @@
-# The Unofficial Guide
+# Campus Q&A RAG Pipeline
 
-<!-- Replace this line with your name and which corpus you picked. -->
+By Carlos Huang · Built in CodePath AI 201
 
-> **This file is your submission.** Fill it in as you go — most sections get
-> written during the milestone that produces them, not at the end.
->
-> How the starter works, and every command you'll need, is in `RUNNING.md`.
-> Leave that file alone.
->
-> **Paste everything as text.** No screenshots, no video. A typed table gets
-> full credit; a picture of the same table gets none.
->
-> Delete these instruction blocks as you replace them. The `<!-- -->` comments
-> are notes to you and don't show up when the page renders — you can leave them
-> or remove them.
+A retrieval-augmented question-answering system over 88 campus-life documents: housing, dining, courses, campus jobs and admin deadlines. Ask it something like "is the housing lottery actually random?" and it finds the right documents, answers from them, and names its sources. If the documents don't cover a question, a relevance gate refuses it instead of letting the model guess.
+
+**Stack:** Python · ChromaDB · all-MiniLM-L6-v2 embeddings (384-dim, cosine distance) · Gemini for answers
+
+## Results
+
+- **Better chunking:** I replaced the starter's fixed 800-character windows with paragraph chunks that carry the document's heading. Average retrieval distance dropped **25.8%**, and **53.5%** on the best question. ([full comparison](results/chunker_comparison_2026-11-14_1321.md))
+- **Relevance gate:** a 0.6 cosine-distance cutoff (0.40 similarity) refused **5 of 5** out-of-scope questions, like "What is the capital of Mongolia?", and let all 5 in-scope questions through.
+- **Answers cite sources:** every answer across 15 runs named at least one source file.
+- **Limit:** the test set is 5 in-scope and 5 out-of-scope questions. Both chunkers passed 5 of 5, so I report retrieval distance instead of pass rate to show the difference.
+
+Rerun the chunker comparison: `python compare_chunkers.py`. Setup and other commands are in [`RUNNING.md`](RUNNING.md).
 
 ---
 
-# Unit 1
+# Project write-up
 
 ## What This Does
 
-<!-- Three or four sentences. Which corpus you picked, and the kinds of
-     questions your system answers. Write it for someone who has never seen
-     this repo.
-
-     Milestone 5. -->
+I picked the `campus_life` corpus: 88 short posts written by students about housing, dining halls, course workload, campus jobs and admin deadlines. The system answers practical questions a new student would ask, like how long the lunch line is at Pellew Dining Hall or how many hours a week CS 210 takes. It answers only from the documents and names the file each answer came from.
 
 ## Chunking Strategy
 
-**Chunk size:**
-**Overlap:**
+**Chunk size:** one paragraph per chunk (167 characters on average, 63 to 397)
+**Overlap:** none. Instead, every chunk carries its document's heading.
 
-<!-- What about YOUR documents made you pick these numbers? Short posts and
-     long sectioned guides don't want the same chunking, and "800 seemed
-     reasonable" earns nothing. Point at something you noticed when you read
-     the documents in Milestone 1.
+The starter chunker cut every document into fixed 800-character windows with 120 characters of overlap, and paid no attention to where sentences or paragraphs end. Most `campus_life` posts are shorter than 800 characters, so it just turned each post into one chunk (88 posts, 88 chunks). That meant one chunk could mix several topics, like the good and the bad of a dorm in the same piece.
 
-     If you changed your mind partway through, say so and say why. That's worth
-     more than pretending you got it right first time.
-
-     Milestone 3. -->
+I changed `split_documents` so it splits on blank lines into paragraphs. That way every chunk is made of complete sentences and covers one idea. A paragraph with no ending punctuation is a heading, not content, so it gets merged into the next paragraph instead of becoming its own chunk. The document's opening heading gets added to every chunk, so even a chunk like "The good: cheapest housing tier by about $900 a year" still says it's about Morrow House.
 
 ## Sample Chunks
 
-<!-- Five chunks, pasted as text. Label each one and name the file it came from
-     AND the function that produced it — the grader checks your code against
-     what you claim here.
+Produced by `chunker.py::split_documents`:
 
-     `python app.py chunks -n 5` prints all three for you. Copy them straight
-     across.
-
-     Milestone 3. -->
-
-**Chunk 1** — source: `` — produced by: ``
+**Chunk 1** — source: `admin_add_drop_deadline.txt#0`
 
 ```
-======================================================================
-Chunk 1  |  source: admin_add_drop_deadline.txt#0  |  produced by: chunker.py::split_documents
-======================================================================
 On the add/drop deadline
 
 You can add a course through the end of the second week. Dropping is a longer window — through the end of week six — but a drop after week two shows as a W on your transcript. Nothing anywhere on the registrar's site says this plainly, and students find out from each other.
 ```
 
-**Chunk 2** — source: `` — produced by: ``
+**Chunk 2** — source: `course_cs_340_exams.txt#1`
 
 ```
-======================================================================
-Chunk 2  |  source: course_cs_340_exams.txt#1  |  produced by: chunker.py::split_documents
-======================================================================
+CS 340 Databases — assessment
+
 Start the term project in week three, not week eight; everyone learns this the hard way.
 ```
 
-**Chunk 3** — source: `` — produced by: ``
+**Chunk 3** — source: `course_phys_130_workload.txt#0`
 
 ```
-Chunk 3  |  source: course_phys_130_workload.txt#0  |  produced by: chunker.py::split_documents
-======================================================================
 Workload for PHYS 130 Mechanics
 
 People keep asking so: 7 hours a week, plus 3 on lab weeks. That's real time, not optimistic time.
 ```
 
-**Chunk 4** — source: `` — produced by: ``
+**Chunk 4** — source: `dining_verrill_street_grill_followup.txt#1`
 
 ```
-Chunk 4  |  source: dining_verrill_street_grill_followup.txt#1  |  produced by: chunker.py::split_documents
-======================================================================
+Re: Verrill Street Grill
+
 Also worth saying: one register, so the queue is a single line no matter how busy. Nobody tells you this at orientation.
 ```
 
-**Chunk 5** — source: `` — produced by: ``
+**Chunk 5** — source: `housing_morrow_house.txt#1`
 
 ```
-======================================================================
-Chunk 5  |  source: housing_morrow_house.txt#1  |  produced by: chunker.py::split_documents
-======================================================================
+Morrow House — what it's actually like
+
 The good: cheapest housing tier by about $900 a year, and the singles are real singles.
 ```
 
 ## Sample Answer
 
-<!-- One complete question and answer, pasted as text, with the source line
-     visible. Milestone 4. -->
-
-**Question:**
+**Question:** is the housing lottery actually random?
 
 **Answer:**
 
 ```
-   {"question": "is the housing lottery actually random?", "expects": "credit hours"},
-    {"question": "how long is the wait at Pellew Dining Hall during peak lunch time?", "expects": "12 to 18 minutes"},
-    {"question": "how many hours a week does a campus job allow during term?", "expects": "20 hours"},
-    {"question": "how many hours a week should I expect for CS 210?", "expects": "8 to 10 hours"},
-    {"question": "when is the best time to do laundry in Tamsin Court?", "expects": "Tuesday"},
+The housing lottery is not entirely random for everyone; while rising sophomores get a number drawn at random, juniors and seniors are ordered by accumulated credit hours first, with a random tie-break used only afterwards.
+Source: admin_housing_lottery.txt
 ```
 
-**My relevance cutoff:**
+Best distance: 0.248 (passed the gate) · from [`results/run_2026-09-28_2319_after.md`](results/run_2026-09-28_2319_after.md)
 
-<!-- The number you set in config.py, and how you got there.
+## My Relevance Cutoff
 
-     You ran five questions your corpus covers and the five in OUT_OF_SCOPE
-     that it clearly doesn't, and wrote down the best distance for each. What
-     did those two groups look like? Where was the gap? Put the actual numbers
-     here — the table below wants all ten rows.
+**Cutoff:** 0.6 cosine distance (0.40 cosine similarity), set as `THRESHOLD` in `config.py`.
 
-     Milestone 4. -->
+I ran the 5 questions my corpus covers and 5 it clearly doesn't, and wrote down the best distance for each. The two groups didn't overlap: the worst in-corpus question was 0.263 and the best out-of-corpus one was 0.787. I put the cutoff at 0.6, inside that gap, so there's room on both sides.
 
-| Question | In corpus: campus_life | Best distance is 0.6|
-|---|---|---|
-|  |  |  |
+| Question | In corpus? | Best distance | Gate |
+|---|---|---|---|
+| is the housing lottery actually random? | Yes | 0.248 | passed |
+| how long is the wait at Pellew Dining Hall during peak lunch time? | Yes | 0.132 | passed |
+| how many hours a week does a campus job allow during term? | Yes | 0.163 | passed |
+| how many hours a week should I expect for CS 210? | Yes | 0.263 | passed |
+| when is the best time to do laundry in Tamsin Court? | Yes | 0.124 | passed |
+| What is the capital of Mongolia? | No | 0.787 | refused |
+| How do I change the oil in a diesel engine? | No | 0.923 | refused |
+| Who won the 1994 World Cup? | No | 0.847 | refused |
+| What is the recommended dosage of ibuprofen for a headache? | No | 0.849 | refused |
+| How do I write a for loop in Rust? | No | 0.860 | refused |
 
 ## How I Used AI
 
-<!-- Two specific moments. For each: what you asked for, what came back, and
-     what you changed about it.
+**1.** I asked Claude to help me write the chunker functions because I had a pretty good idea of how I wanted it, but I was not sure how to code it, so I directed it to the answer. The starter chunker cut text at a fixed character count, so I changed it to split on paragraphs and output complete sentences, with the heading kept on every chunk.
 
-     "I asked claude to help me write the chucker funtions because I had a pretty good idea of how I wanted it, but i was not sure how to code it, so I directed it to the answer"
-
-     "I used claude to learn and disgest the material because some of the concepts were not fresh in my brian like chunking"
-
-
-     Milestone 5. 
-           "I asked claude to help me write the chucker funtions because I had a pretty good idea of how I wanted it, but i was not sure how to code it, so I directed it to the answer"
-
-          "I used claude to learn and disgest the material because some of the concepts were not fresh in my brian like chunking"
-
-     -->
-
-**1.**
-
-**2.**
-
-<!-- ── Stretch features ─────────────────────────────────────────────────────
-     Doing one? Say so here BEFORE you start. A feature this README never
-     claims earns nothing.
-     ───────────────────────────────────────────────────────────────────────── -->
+**2.** I used Claude to learn and digest the material because some of the concepts were not fresh in my brain, like chunking. Once I understood the limitation of the starter chunker, it was easy to change it into a better design.
 
 ---
 
 # Unit 2
 
-<!-- These sections get ADDED to what's already above. Don't delete or rewrite
-     unit 1 — the point is that someone can see what you said before you knew
-     how it went. -->
+## Acceptance Criteria
+
+Written before any results existed (full reasoning in [`criteria.md`](criteria.md)):
+
+1. For at least 4 of my 5 test questions, the retrieved chunks include one that contains the answer.
+2. Every answer names at least one source document.
+3. The relevance gate refuses at least 4 of 5 out-of-corpus questions.
+4. At least 4 of 5 sampled chunks cover one topic. *(Revised later; see The Improvement.)*
+5. For at least 4 of my 5 in-corpus questions, the gate lets the question through so an answer is attempted.
 
 ## Run Log — Before
-
-<!-- Your five criteria, three runs each. `python run_eval.py --label before`
-     runs the questions, puts the OUT_OF_SCOPE ones through the gate, and
-     writes it all into results/ for you. Targets come from criteria.md; the
-     verdict column is your call.
-
-     Criterion 3 is measured in one deterministic pass rather than three, so
-     the same number goes in all three run columns. That's correct, not lazy.
-
-     Milestone 1. -->
-
-| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
-|---|---|---|---|---|---|
-| 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 | 5/5 | 5/5 | |
-| 2. Every answer names a source | 5 of 5 | 5/5 | 5/5 | 5/5 ||
-| 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 | 5/5 | 5/5 ||
-| 4. | | | | | |
-| 5. | | | | | |
-
-<!-- Underneath, paste the REAL output for each criterion from one of your
-     runs — the actual text your system produced, not a description of it.
-     Name the file and function that produced it. -->
-### is the housing lottery actually random? — run 1
-
-- Best distance: 0.2483 (passed the gate)
-- Sources retrieved: admin_housing_lottery.txt, admin_parking_permits.txt, advising_registration.txt, housing_innisfree_hall.txt, housing_morrow_house.txt
-
-```
-The housing lottery is not entirely random; rising sophomores get a number drawn at random, but juniors and seniors are ordered first by accumulated credit hours, using random selection only as a tie-breaker (admin_housing_lottery.txt).
-```
-
-### is the housing lottery actually random? — run 2
-
-- Best distance: 0.2483 (passed the gate)
-- Sources retrieved: admin_housing_lottery.txt, admin_parking_permits.txt, advising_registration.txt, housing_innisfree_hall.txt, housing_morrow_house.txt
-
-```
-No, the housing lottery is not entirely random. Rising sophomores receive a randomly drawn number, but juniors and seniors are ordered by accumulated credit hours first, with random selection used only as a tie-breaker (admin_housing_lottery.txt).
-```
-
-### is the housing lottery actually random? — run 3
-
-- Best distance: 0.2483 (passed the gate)
-- Sources retrieved: admin_housing_lottery.txt, admin_parking_permits.txt, advising_registration.txt, housing_innisfree_hall.txt, housing_morrow_house.txt
-
-```
-The housing lottery is not entirely random; rising sophomores have a number drawn at random, but juniors and seniors are ordered first by accumulated credit hours, with random tie-breaking used only when necessary. 
-
-Source: `admin_housing_lottery.txt`
-```
-
-### how long is the wait at Pellew Dining Hall during peak lunch time? — run 1
-
-- Best distance: 0.1323 (passed the gate)
-- Sources retrieved: dining_halden_hall_followup.txt, dining_kestrel_commons_followup.txt, dining_pellew_dining_hall.txt, dining_pellew_dining_hall_followup.txt, dining_the_ridgeway_cafe_followup.txt
-
-```
-Based on the documents provided, the wait time at Pellew Dining Hall during peak times is 12 to 18 minutes (dining_pellew_dining_hall.txt and dining_pellew_dining_hall_followup.txt).
-```
-
-### how long is the wait at Pellew Dining Hall during peak lunch time? — run 2
-
-- Best distance: 0.1323 (passed the gate)
-- Sources retrieved: dining_halden_hall_followup.txt, dining_kestrel_commons_followup.txt, dining_pellew_dining_hall.txt, dining_pellew_dining_hall_followup.txt, dining_the_ridgeway_cafe_followup.txt
-
-```
-The wait time at Pellew Dining Hall is 12 to 18 minutes at peak. This information comes from the documents `dining_pellew_dining_hall.txt` and `dining_pellew_dining_hall_followup.txt`.
-```
-
-### how long is the wait at Pellew Dining Hall during peak lunch time? — run 3
-
-- Best distance: 0.1323 (passed the gate)
-- Sources retrieved: dining_halden_hall_followup.txt, dining_kestrel_commons_followup.txt, dining_pellew_dining_hall.txt, dining_pellew_dining_hall_followup.txt, dining_the_ridgeway_cafe_followup.txt
-
-```
-The wait time at Pellew Dining Hall is 12 to 18 minutes at peak lunch time (dining_pellew_dining_hall.txt and dining_pellew_dining_hall_followup.txt).
-```
-
-### how many hours a week does a campus job allow during term? — run 1
-
-- Best distance: 0.2427 (passed the gate)
-- Sources retrieved: course_cs_210.txt, course_econ_101.txt, course_stat_150.txt, housing_aldridge_hall.txt, money_jobs.txt
-
-```
-A campus job allows a maximum of 20 hours a week during term, though most people find 10 to 12 hours is the point where it stops affecting coursework. 
-
-Source: money_jobs.txt
-```
-
-### how many hours a week does a campus job allow during term? — run 2
-
-- Best distance: 0.2427 (passed the gate)
-- Sources retrieved: course_cs_210.txt, course_econ_101.txt, course_stat_150.txt, housing_aldridge_hall.txt, money_jobs.txt
-
-```
-A campus job allows a maximum of 20 hours a week during term, though most people find 10 to 12 hours is the point where it stops affecting coursework. 
-
-Source: money_jobs.txt
-```
-
-### how many hours a week does a campus job allow during term? — run 3
-
-- Best distance: 0.2427 (passed the gate)
-- Sources retrieved: course_cs_210.txt, course_econ_101.txt, course_stat_150.txt, housing_aldridge_hall.txt, money_jobs.txt
-
-```
-A campus job allows a maximum of 20 hours a week during term, though most people find 10 to 12 hours is the point where it stops affecting coursework. 
-
-Source: money_jobs.txt
-```
-
-### how many hours a week should I expect for CS 210? — run 1
-
-- Best distance: 0.3098 (passed the gate)
-- Sources retrieved: course_cs_210.txt, course_cs_210_workload.txt, course_math_220.txt, course_phys_130.txt, course_stat_150_workload.txt
-
-```
-For CS 210, you should expect 8 to 10 hours a week outside class. 
-
-This answer came from `course_cs_210_workload.txt` and `course_cs_210.txt`.
-```
-
-### how many hours a week should I expect for CS 210? — run 2
-
-- Best distance: 0.3098 (passed the gate)
-- Sources retrieved: course_cs_210.txt, course_cs_210_workload.txt, course_math_220.txt, course_phys_130.txt, course_stat_150_workload.txt
-
-```
-You should expect 8 to 10 hours a week outside of class for CS 210. 
-
-This information comes from `course_cs_210.txt` and `course_cs_210_workload.txt`.
-```
-
-### how many hours a week should I expect for CS 210? — run 3
-
-- Best distance: 0.3098 (passed the gate)
-- Sources retrieved: course_cs_210.txt, course_cs_210_workload.txt, course_math_220.txt, course_phys_130.txt, course_stat_150_workload.txt
-
-```
-You should expect 8 to 10 hours a week outside class for CS 210. 
-
-Source: `course_cs_210_workload.txt` (and also mentioned in `course_cs_210.txt`).
-```
-
-### when is the best time to do laundry in Tamsin Court? — run 1
-
-- Best distance: 0.2727 (passed the gate)
-- Sources retrieved: housing_fenwick_court_laundry.txt, housing_innisfree_hall_laundry.txt, housing_morrow_house_laundry.txt, housing_old_brewhouse_laundry.txt, housing_tamsin_court_laundry.txt
-
-```
-The best time to do laundry in Tamsin Court is Tuesday or Wednesday morning. 
-
-Source: housing_tamsin_court_laundry.txt
-```
-
-### when is the best time to do laundry in Tamsin Court? — run 2
-
-- Best distance: 0.2727 (passed the gate)
-- Sources retrieved: housing_fenwick_court_laundry.txt, housing_innisfree_hall_laundry.txt, housing_morrow_house_laundry.txt, housing_old_brewhouse_laundry.txt, housing_tamsin_court_laundry.txt
-
-```
-The best time to do laundry in Tamsin Court is Tuesday or Wednesday morning. 
-
-Source: housing_tamsin_court_laundry.txt
-```
-
-### when is the best time to do laundry in Tamsin Court? — run 3
-
-- Best distance: 0.2727 (passed the gate)
-- Sources retrieved: housing_fenwick_court_laundry.txt, housing_innisfree_hall_laundry.txt, housing_morrow_house_laundry.txt, housing_old_brewhouse_laundry.txt, housing_tamsin_court_laundry.txt
-
-```
-The best time to do laundry in Tamsin Court is Tuesday or Wednesday morning. 
-
-Source: housing_tamsin_court_laundry.txt
-```
-
-
-## Verdicts
-
-<!-- MET or MISSED for each of the five, against the target you wrote last
-     unit — not a new one. Plus a sentence on how you decided. That sentence
-     matters most where it was close.
-
-     If your target said 4 of 5 and your runs came out 4, 3, 4, that's a MISS.
-     The target has to hold, not show up occasionally.
-
-     Milestone 2. -->
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
 | 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
 | 2. Every answer names a source | 5 of 5 | 5/5 | 5/5 | 5/5 | MET |
 | 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
-| 4. For at least 4 of 5 sampled chunks, the chunk covers one topic | 4 of 5 | 5/5 | "Not repeated" | "Not repeated" | MET |
-| 5. For at least 4 of my 5 in-corpus test questions, the gate lets the question through (doesn't refuse) so an answer is attempted.| 4 of 5 | 5/5 | "Not repeated" | "Not repeated" | MET |
+| 4. Sampled chunks cover one topic | 4 of 5 | 5/5 | not repeated | not repeated | MET |
+| 5. Gate lets in-corpus questions through | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+
+Criteria 3 and 5 are deterministic (retrieval and a fixed cutoff), so one pass is the whole measurement. Criterion 4 is a manual check of 5 sampled chunks.
+
+Example of real output, produced by `run_eval.py::main` (all 15 answers are in [`results/run_2026-09-27_2145_before.md`](results/run_2026-09-27_2145_before.md)):
+
+**how many hours a week does a campus job allow during term? — run 1**
+
+- Best distance: 0.2427 (passed the gate)
+- Sources retrieved: course_cs_210.txt, course_econ_101.txt, course_stat_150.txt, housing_aldridge_hall.txt, money_jobs.txt
+
+```
+A campus job allows a maximum of 20 hours a week during term, though most people find 10 to 12 hours is the point where it stops affecting coursework.
+
+Source: money_jobs.txt
+```
+
+## Verdicts
+
+| # | Criterion | Target | Verdict | How I decided |
+|---|---|---|---|---|
+| 1 | Retrieved chunk contains the answer | 4 of 5 | MET | All three runs came back 5 of 5, and I confirmed by hand that each retrieved chunk actually contained the fact, not just a close match. |
+| 2 | Every answer names a source | 5 of 5 | MET | I read all 15 generated answers across the three runs, and every one named at least one source file. |
+| 3 | Gate stops out-of-corpus questions | 4 of 5 | MET | The gate refused 5 of 5, a single deterministic measurement rather than three separate trials. |
+| 4 | Sampled chunks cover one topic | 4 of 5 | MET | All five sampled chunks covered a single topic by the wording of this criterion, though two of them depended on context from an adjacent chunk, which this criterion doesn't ask about. |
+| 5 | Gate lets in-corpus questions through | 4 of 5 | MET | All five in-corpus questions passed the gate on every run, again a fixed check rather than a re-rolled one. |
 
 ## Diagnoses
 
-<!-- For each miss: which stage caused it, and how. The stage alone isn't
-     enough — you need the mechanism.
+No original criterion was missed. But passing these tests doesn't tell me much beyond these small tests, so I looked closer at the chunks themselves.
 
-     Not a diagnosis: "Question 3 didn't work."
-     A diagnosis:     "Question 3 asks about laundry costs. The answer is in
-                       one sentence that got split across two chunks, so
-                       neither chunk on its own contains it."
-
-     The five stages: loading → chunking → embedding → retrieval → generation.
-
-     Look for a pattern. If three misses all ask about numbers, that's one
-     problem, not three.
-
-     Missed nothing? Say so, then say honestly whether your targets were set
-     low, and which one you'd tighten and to what.
-     "Target was 4 of 5; all three runs came back 5 of 5, and I confirmed by hand that all five retrieved chunks actually contained the claimed fact — not just a proxy match."
-
-
-"Target was 5 of 5; I read all 15 generated answers across the three runs and every one named at least one source file."
-"Target was 4 of 5; the gate refused 5 of 5 out-of-corpus questions, a single deterministic measurement rather than three separate trials."
-"Target was 4 of 5; all five sampled chunks covered a single topic by the literal wording of this criterion, though two of them depended on context from an adjacent chunk that this criterion doesn't ask about."
-"Target was 4 of 5; all five in-corpus test questions passed the gate on every run, again a fixed check rather than a re-rolled one."
-
-
-
-     Milestone 3. -->
-Criterion 3 was measured once because retrieval and the fixed relevance gate are deterministic. Criterion 4 is based on manual inspection of the five sampled chunks, rather than the generated-answer runs. No original criterion was missed. But passing the test does not tell us much beyoung these small tests. The split separated those passages from the context needed to interpret them. If retrieved alone, they could give the model incomplete context. The current runs do not demonstrate that this caused an incorrect answer.
-
-Original criterion 4 — retained: For at least 4 of 5 sampled chunks, the chunk covers one topic.
-
-Revised criterion 4: At least 4 of 5 sampled chunks must explicitly name the specific entity their content describes—for example, “Tamsin Court” rather than just “the hall.” The name must appear in the chunk’s text or an included heading; a filename or adjacent chunk does not count.
-
-
-
-
+Two of my sampled chunks started mid-thought. One began with "Also worth saying:" and another with "The good:", and both referred to content that landed in a different chunk. The split separated those passages from the context needed to understand them. If one got retrieved alone, the model would see half a comparison with no idea what the other half was. My runs didn't show this causing a wrong answer, but my criterion 4 ("covers one topic") let both chunks pass, so it couldn't catch the problem.
 
 ## The Improvement
-" There is a need to change how my critirion are changed"
-**What I changed:**
-" I will revise criterion 4 as shown above and adjust the chunking logic to preserve the context needed to understand a passage, such as keeping an introductory statement or section heading with the text it introduces. "
-**Why I picked it:**
-"Maybe change criterion 4 becasue I have direct evidence it's broken as written. Chunks 4 and 5 in your sample opened with "Also worth saying:" and "The good:" — both referring to content that landed in a different chunk. Your criterion said "covers one topic," so both passed. But a chunk that starts mid-thought is a real retrieval liability: if that chunk gets retrieved alone, the model sees half a comparison with no idea what the other half was. You found a genuine defect and your criterion was blind to it. That's the strongest possible case for tightening — it's not speculation, it's a measured gap."
 
-<!-- Connect it to a specific diagnosis above in one sentence. If you can't,
-     you picked a fix because it sounded impressive. -->
+**What I changed:** I revised criterion 4 and changed the chunking logic to keep the context needed to understand a passage. Now the document's heading travels with every chunk, so a chunk always names what it's about.
+
+**Revised criterion 4:** At least 4 of 5 sampled chunks must explicitly name the specific thing their content describes, for example "Tamsin Court" rather than just "the hall." The name must appear in the chunk's text or an included heading; a filename or an adjacent chunk doesn't count.
+
+**Why I picked it:** I had direct evidence that criterion 4 was broken as written. Chunks starting with "Also worth saying:" and "The good:" passed "covers one topic" even though they made no sense on their own. That's a real retrieval problem, not a guess, so it was the right thing to fix.
 
 ### Run Log — After
 
-<!-- Same format, same five criteria, three runs each.
-     `python run_eval.py --label after` -->
+Produced by `run_eval.py::main` on 2026-09-28 with the new `split_documents` ([`results/run_2026-09-28_2319_after.md`](results/run_2026-09-28_2319_after.md)).
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1. Retrieved chunk contains the answer | 4 of 5 |  |  |  |  |
-| 2. Every answer names a source | 5 of 5 |  |  |  |  |
-| 3. Gate stops out-of-corpus questions | 4 of 5 |  |  |  |  |
-| 4. | | | | | |
-| 5. | | | | | |
+| 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 2. Every answer names a source | 5 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 4. Sampled chunks name their subject (revised) | 4 of 5 | 5/5 | not repeated | not repeated | MET |
+| 5. Gate lets in-corpus questions through | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+
+Revised criterion 4 was re-checked on 2026-11-22 against the five sample chunks above. All five now name their subject through the heading: the add/drop deadline, CS 340, PHYS 130, Verrill Street Grill and Morrow House.
 
 **Did it help?**
 
-<!-- Say plainly whether it did, and how you know. If it made things worse,
-     say that — a change that backfired, honestly reported, earns full credit
-     and is more interesting than one that worked. What matters is that you can
-     tell.
+Yes. The pass rates were already 5 of 5 before the change, so they couldn't show any difference. Retrieval distance does. On the same 5 questions, with the same top-5 retrieval and cutoff:
 
-     Milestone 4. -->
+| | Before (fixed 800-char windows) | After (paragraph chunks + heading) |
+|---|---|---|
+| Chunks | 88, 317 characters on average | 183, 167 characters on average |
+| Questions answered | 5 of 5 | 5 of 5 |
+| Out-of-scope refused | 5 of 5 | 5 of 5 |
+| Retrieval distance | baseline | **25.8% lower on average**, 53.5% on the best question |
+
+Lower distance means the retrieved chunk is a closer match to the question. The change didn't cost the gate anything. Full numbers: [`results/chunker_comparison_2026-11-14_1321.md`](results/chunker_comparison_2026-11-14_1321.md).
 
 ## What's Still Broken
 
-<!-- For each criterion still missed after your fix: what you'd do about it,
-     and why you stopped where you did.
-
-     " I am not sure what to do for milestone 3 and 4 becasue based on my test, nothing is broken. all my quesitons passes. Maybe I can desgin a questions that can fail. I am not sure."
-
-
-     Milestone 5. -->
+Based on my tests, nothing is broken: every question passes. That mostly says my test set is too easy. Next I'd design questions that can fail, like questions whose answer is split across two chunks, questions that need a number from one document and a condition from another, and out-of-scope questions that sound close to campus life (for example, a dorm at a different school).
 
 ## What I'd Do Differently
 
-<!-- Knowing what you know now — which of your five criteria would you write
-     differently, and why?
-
-     " I would probrably rewrite critia number one "For at least 4 of my 5 test questions, the retrieved chunks include one that
-contains the answer." because just one of the chunks taht contains the answer seems to lenient to be a real critia. "
-
-     Milestone 5. -->
+I would rewrite criterion 1, "For at least 4 of my 5 test questions, the retrieved chunks include one that contains the answer," because needing just one retrieved chunk that contains the answer seems too lenient to be a real criterion. A stricter version would require the answer to be in the top-ranked chunk.
